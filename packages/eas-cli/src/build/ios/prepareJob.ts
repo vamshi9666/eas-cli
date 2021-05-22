@@ -43,7 +43,9 @@ interface CommonJobProperties {
   platform: Platform.IOS;
   projectArchive: ArchiveSource;
   builderEnvironment: Ios.BuilderEnvironment;
-  releaseChannel?: string;
+  // delete doesn't exist on here, is on eas-build-job BaseJob instead
+  // releaseChannel?: string;
+  // updates?: { channel: string };
   distribution?: Ios.DistributionType;
   cache: Cache;
   secrets: {
@@ -131,6 +133,7 @@ async function prepareGenericJobAsync(
     buildConfiguration: buildProfile.schemeBuildConfiguration,
     artifactPath: buildProfile.artifactPath,
     releaseChannel: buildProfile.releaseChannel,
+    updates: buildProfile.updates,
     projectRootDirectory,
   };
 }
@@ -153,6 +156,7 @@ async function prepareManagedJobAsync(
     buildType: buildProfile.buildType,
     username,
     releaseChannel: buildProfile.releaseChannel,
+    updates: buildProfile.updates,
     projectRootDirectory,
   };
 }

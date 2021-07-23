@@ -1,4 +1,9 @@
-import { EasJsonReader } from '@expo/eas-json';
+import {
+  EasJsonReader,
+  hasMismatchedExtendsAsync,
+  isUsingDeprecatedFormatAsync,
+  migrateAsync,
+} from '@expo/eas-json';
 import { flags } from '@oclif/command';
 import { error, exit } from '@oclif/errors';
 
@@ -18,7 +23,7 @@ import {
   isEasEnabledForProjectAsync,
 } from '../../project/isEasEnabledForProject';
 import { findProjectRootAsync } from '../../project/projectUtils';
-import { promptAsync } from '../../prompts';
+import { confirmAsync, promptAsync } from '../../prompts';
 import vcs from '../../vcs';
 
 interface RawBuildFlags {
@@ -80,19 +85,18 @@ export default class Build extends EasCommand {
 
   async run(): Promise<void> {
     const { flags: rawFlags } = this.parse(Build);
-
     const flags = await this.sanitizeFlagsAsync(rawFlags);
     const { requestedPlatform } = flags;
+
+    const projectDir = (await findProjectRootAsync()) ?? process.cwd();
+    await handleDeprecatedEasJsonAsync(projectDir, flags.nonInteractive);
 
     await vcs.ensureRepoExistsAsync();
     await ensureRepoIsCleanAsync(flags.nonInteractive);
 
-    const projectDir = (await findProjectRootAsync()) ?? process.cwd();
     await ensureProjectConfiguredAsync(projectDir, requestedPlatform);
 
-    const easConfig = await new EasJsonReader(projectDir, requestedPlatform).readAsync(
-      flags.profile
-    );
+    const easJsonReader = new EasJsonReader(projectDir);
     const platformsToBuild = this.getPlatformsToBuild(requestedPlatform);
 
     const startedBuilds: BuildFragment[] = [];
@@ -100,7 +104,7 @@ export default class Build extends EasCommand {
       const ctx = await createBuildContextAsync({
         buildProfileName: flags.profile,
         clearCache: flags.clearCache,
-        easConfig,
+        buildProfile: await easJsonReader.readBuildProfileAsync(flags.profile, platform),
         local: flags.local,
         nonInteractive: flags.nonInteractive,
         platform,
@@ -207,6 +211,44 @@ export default class Build extends EasCommand {
     );
     if (failedBuilds.length > 0) {
       exit(1);
+    }
+  }
+}
+
+export async function handleDeprecatedEasJsonAsync(
+  projectDir: string,
+  nonInteractive: boolean
+): Promise<void> {
+  if (await isUsingDeprecatedFormatAsync(projectDir)) {
+    const hasMismatchedExtendsKeys = await hasMismatchedExtendsAsync(projectDir);
+    if (nonInteractive) {
+      Log.error('We detected that your eas.json is using deprecated format.');
+      Log.error(
+        'We will convert it automatically if run this command without --non-interactive flag or you can update your eas.json manually according to https://docs.expo.io/build/eas-json'
+      );
+      error('Unsupported eas.json format', { exit: 1 });
+    }
+
+    const confirm = await confirmAsync({
+      message:
+        'We detected that your eas.json is using deprecated format, do you want us to migrate it automatically',
+    });
+    if (confirm) {
+      await migrateAsync(projectDir);
+      if (hasMismatchedExtendsKeys) {
+        Log.warn(
+          '"extends" keyword can only be migrated automatically to the new format if both Android and iOS profiles extend base profiles with the same names for both platforms'
+        );
+        Log.warn(
+          'Migration was sucesfull, but you need to adjust manually a way your profile extend each other'
+        );
+        error('Manual intervention is reuired', { exit: 1 });
+      }
+    } else {
+      Log.error(
+        'Aborting, update you eas.json according to https://docs.expo.io/build/eas-json and run build again'
+      );
+      error('Unsupported eas.json format', { exit: 1 });
     }
   }
 }
